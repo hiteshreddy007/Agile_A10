@@ -1,4 +1,4 @@
 FROM nginx:alpine
-# Intentionally missing the COPY statement to trigger a deployment rollout failure
+COPY index.html /usr/share/nginx/html/index.html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
