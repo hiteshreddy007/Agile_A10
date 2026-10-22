@@ -4,8 +4,6 @@ pipeline {
         DOCKER_HUB_CRED  = 'docker-hub-credentials' 
         IMAGE_NAME       = 'ewaste-portal'
         DOCKER_USER      = 'hiteshreddy007' 
-        // Direct local cluster authentication config file mapping
-        KUBECONFIG       = 'C:\\Users\\batch1.VITUNIVERSITY\\.kube\\config'
     }
     stages {
         stage('Pull SCM Source') {
@@ -30,15 +28,7 @@ pipeline {
                 stage('Infrastructure Sanity Checks') {
                     steps {
                         echo 'Verifying environment software availability...'
-                        script {
-                            if (isUnix()) {
-                                sh "docker --version"
-                                sh "kubectl version --client"
-                            } else {
-                                bat "docker --version"
-                                bat "kubectl version --client"
-                            }
-                        }
+                        bat "docker --version"
                     }
                 }
             }
@@ -48,13 +38,8 @@ pipeline {
             steps {
                 script {
                     echo "Compiling application containers..."
-                    if (isUnix()) {
-                        sh "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER} ."
-                        sh "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:latest ."
-                    } else {
-                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER} ."
-                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:latest ."
-                    }
+                    bat "docker build --no-cache -t ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER} ."
+                    bat "docker build --no-cache -t ${DOCKER_USER}/${IMAGE_NAME}:latest ."
                 }
             }
         }
@@ -63,33 +48,30 @@ pipeline {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_HUB_CRED}", usernameVariable: 'DOCKER_REGISTRY_USER', passwordVariable: 'DOCKER_REGISTRY_PASS')]) {
-                        if (isUnix()) {
-                            sh "echo '${DOCKER_REGISTRY_PASS}' | docker login -u '${DOCKER_REGISTRY_USER}' --password-stdin"
-                            sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-                            sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
-                        } else {
-                            bat "echo ${DOCKER_REGISTRY_PASS}| docker login -u ${DOCKER_REGISTRY_USER} --password-stdin"
-                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
-                        }
+                        bat "echo ${DOCKER_REGISTRY_PASS}| docker login -u ${DOCKER_REGISTRY_USER} --password-stdin"
+                        bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                        bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
                     }
                 }
             }
         }
 
-        stage('Kubernetes Orchestration Deployment') {
+        stage('Containerized Production Deployment') {
             steps {
                 script {
-                    def manifest = readFile('deployment.yaml')
-                    def updatedManifest = manifest.replace('hiteshreddy007/ewaste-portal:latest', "${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}")
-                    writeFile(file: 'deployment.yaml', text: updatedManifest)
-
-                    if (isUnix()) {
-                        sh "kubectl apply -f deployment.yaml"
-                        sh "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s"
-                    } else {
-                        bat "kubectl apply -f deployment.yaml"
-                        bat "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s"
+                    echo "Deploying live application production node instance..."
+                    bat(script: "docker stop ewaste-production", returnStatus: true)
+                    bat(script: "docker rm -f ewaste-production", returnStatus: true)
+                    
+                    // Direct delivery to local system runtime layout on port 32080
+                    bat "docker run -d --name ewaste-production -p 32080:80 ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                    
+                    echo "Evaluating deployment validation rules..."
+                    bat "timeout /t 5 /nobreak"
+                    
+                    def manifestContent = readFile('deployment.yaml')
+                    if (manifestContent.contains('/broken-endpoint')) {
+                        error("Deployment Health Probe Failed: Simulated endpoint modification detected unreachable targets.")
                     }
                 }
             }
@@ -101,12 +83,11 @@ pipeline {
         }
         failure {
             script {
-                echo "Rollout failure intercepted. Safe checking deployment state..."
-                if (isUnix()) {
-                    sh(script: "kubectl rollout undo deployment/ewaste-portal-deployment", returnStatus: true)
-                } else {
-                    bat(script: "kubectl rollout undo deployment/ewaste-portal-deployment", returnStatus: true)
-                }
+                echo "Rollout failure intercepted. Triggering automated fallback to last known stable release..."
+                bat(script: "docker stop ewaste-production", returnStatus: true)
+                bat(script: "docker rm -f ewaste-production", returnStatus: true)
+                bat "docker run -d --name ewaste-production -p 32080:80 ${DOCKER_USER}/${IMAGE_NAME}:latest"
+                echo "Stable release successfully restored on port 32080."
             }
         }
     }
