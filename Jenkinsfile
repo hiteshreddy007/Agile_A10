@@ -28,7 +28,7 @@ pipeline {
                 }
                 stage('Infrastructure Sanity Checks') {
                     steps {
-                        echo 'Verifying Docker and Kubernetes target configurations...'
+                        echo 'Verifying Docker and Kubernetes configurations...'
                         script {
                             if (isUnix()) {
                                 sh "docker --version"
@@ -53,10 +53,10 @@ pipeline {
                         sh "sleep 5"
                         sh "docker rm -f test_run"
                     } else {
-                        // Fixed Windows bat syntax for cleaning up containers safely
-                        bat "docker build -t %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER% ."
-                        bat "docker build -t %DOCKER_USER%/%IMAGE_NAME%:latest ."
-                        bat "docker run -d --name test_run -p 8085:80 %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER%"
+                        // Using native Groovy interpolation ("${}") instead of % variables to prevent Windows exit 125 crashes
+                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER} ."
+                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:latest ."
+                        bat "docker run -d --name test_run -p 8085:80 ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
                         bat "timeout /t 5 /nobreak"
                         bat "docker rm -f test_run"
                     }
@@ -73,10 +73,10 @@ pipeline {
                             sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
                             sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
                         } else {
-                            // Fixed Windows echo redirection syntax
-                            bat "echo %DOCKER_REGISTRY_PASS%| docker login -u %DOCKER_REGISTRY_USER% --password-stdin"
-                            bat "docker push %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER%"
-                            bat "docker push %DOCKER_USER%/%IMAGE_NAME%:latest"
+                            // Fixed Windows inline evaluation stream variables
+                            bat "echo ${DOCKER_REGISTRY_PASS}| docker login -u ${DOCKER_REGISTRY_USER} --password-stdin"
+                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
                         }
                     }
                 }
@@ -94,17 +94,11 @@ pipeline {
                         if (isUnix()) {
                             sh "kubectl apply -f deployment.yaml"
                             echo "Evaluating rolling updates rollout progress..."
-                            def rolloutStatus = sh(script: "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s", returnStatus: true)
-                            if (rolloutStatus != 0) {
-                                error("Deployment rollout failed. Triggering automatic rollback recovery...")
-                            }
+                            sh "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s"
                         } else {
                             bat "kubectl apply -f deployment.yaml"
                             echo "Evaluating rolling updates rollout progress..."
-                            def rolloutStatus = bat(script: "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s", returnStatus: true)
-                            if (rolloutStatus != 0) {
-                                error("Deployment rollout failed. Triggering automatic rollback recovery...")
-                            }
+                            bat "kubectl rollout status deployment/ewaste-portal-deployment --timeout=90s"
                         }
                     }
                 }
@@ -117,26 +111,20 @@ pipeline {
         }
         failure {
             script {
-                echo "Rollout failure intercepted. Checking if deployment exists before rollback..."
-                withCredentials([file(credentialsId: "${KUBE_CONFIG_CRED}", variable: 'KUBECONFIG')]) {
-                    if (isUnix()) {
-                        def checkDeploy = sh(script: "kubectl get deployment ewaste-portal-deployment", returnStatus: true)
-                        if (checkDeploy == 0) {
+                echo "Rollout failure intercepted. Validating active deployments..."
+                // Catching errors safely with try-catch so an initial rollout failure won't crash the pipeline post-actions block
+                try {
+                    withCredentials([file(credentialsId: "${KUBE_CONFIG_CRED}", variable: 'KUBECONFIG')]) {
+                        if (isUnix()) {
                             sh "kubectl rollout undo deployment/ewaste-portal-deployment"
                             sh "kubectl rollout status deployment/ewaste-portal-deployment"
                         } else {
-                            echo "No active deployment found to roll back."
-                        }
-                    } else {
-                        // Checks if deployment exists on Windows to avoid crashing the failure stage
-                        def checkDeploy = bat(script: "kubectl get deployment ewaste-portal-deployment", returnStatus: true)
-                        if (checkDeploy == 0) {
                             bat "kubectl rollout undo deployment/ewaste-portal-deployment"
                             bat "kubectl rollout status deployment/ewaste-portal-deployment"
-                        } else {
-                            echo "No active deployment found to roll back."
                         }
                     }
+                } catch (Exception e) {
+                    echo "No active deployment history found to revert. Skipping rollback lifecycle phase safely."
                 }
             }
         }
