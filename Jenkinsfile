@@ -4,7 +4,7 @@ pipeline {
         DOCKER_HUB_CRED  = 'docker-hub-credentials' 
         IMAGE_NAME       = 'ewaste-portal'
         DOCKER_USER      = 'hiteshreddy007' 
-        // Force the Windows agent to read your direct local cluster authentication config path
+        // Direct local cluster authentication config file mapping
         KUBECONFIG       = 'C:\\Users\\batch1.VITUNIVERSITY\\.kube\\config'
     }
     stages {
