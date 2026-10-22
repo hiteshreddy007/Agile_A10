@@ -18,7 +18,6 @@ pipeline {
                 stage('HTML Linting') {
                     steps {
                         echo 'Evaluating static structure integrity...'
-                        // Cross-platform check: searches for key text in index.html without relying on OS-specific grep utilities
                         script {
                             def fileContent = readFile('index.html')
                             if (!fileContent.contains('Authorized Municipal Collection Centres')) {
@@ -30,7 +29,6 @@ pipeline {
                 stage('Infrastructure Sanity Checks') {
                     steps {
                         echo 'Verifying Docker and Kubernetes target configurations...'
-                        // Checks standard engineering tools availability via simple error tolerance pipelines
                         script {
                             if (isUnix()) {
                                 sh "docker --version"
@@ -55,9 +53,10 @@ pipeline {
                         sh "sleep 5"
                         sh "docker rm -f test_run"
                     } else {
-                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER} ."
-                        bat "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:latest ."
-                        bat "docker run -d --name test_run -p 8085:80 ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                        // Fixed Windows bat syntax for cleaning up containers safely
+                        bat "docker build -t %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER% ."
+                        bat "docker build -t %DOCKER_USER%/%IMAGE_NAME%:latest ."
+                        bat "docker run -d --name test_run -p 8085:80 %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER%"
                         bat "timeout /t 5 /nobreak"
                         bat "docker rm -f test_run"
                     }
@@ -74,9 +73,10 @@ pipeline {
                             sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
                             sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
                         } else {
-                            bat "echo ${DOCKER_REGISTRY_PASS} | docker login -u ${DOCKER_REGISTRY_USER} --password-stdin"
-                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
-                            bat "docker push ${DOCKER_USER}/${IMAGE_NAME}:latest"
+                            // Fixed Windows echo redirection syntax
+                            bat "echo %DOCKER_REGISTRY_PASS%| docker login -u %DOCKER_REGISTRY_USER% --password-stdin"
+                            bat "docker push %DOCKER_USER%/%IMAGE_NAME%:%BUILD_NUMBER%"
+                            bat "docker push %DOCKER_USER%/%IMAGE_NAME%:latest"
                         }
                     }
                 }
@@ -86,7 +86,6 @@ pipeline {
         stage('Kubernetes Orchestration Deployment') {
             steps {
                 script {
-                    // Universally handles dynamic image tag replacement across Windows, Linux, and macOS
                     def manifest = readFile('deployment.yaml')
                     def updatedManifest = manifest.replace('hiteshreddy007/ewaste-portal:latest', "${DOCKER_USER}/${IMAGE_NAME}:${BUILD_NUMBER}")
                     writeFile(file: 'deployment.yaml', text: updatedManifest)
@@ -118,14 +117,25 @@ pipeline {
         }
         failure {
             script {
-                echo "Rollout failure intercepted. Automatically restoring last stable software revision history layer..."
+                echo "Rollout failure intercepted. Checking if deployment exists before rollback..."
                 withCredentials([file(credentialsId: "${KUBE_CONFIG_CRED}", variable: 'KUBECONFIG')]) {
                     if (isUnix()) {
-                        sh "kubectl rollout undo deployment/ewaste-portal-deployment"
-                        sh "kubectl rollout status deployment/ewaste-portal-deployment"
+                        def checkDeploy = sh(script: "kubectl get deployment ewaste-portal-deployment", returnStatus: true)
+                        if (checkDeploy == 0) {
+                            sh "kubectl rollout undo deployment/ewaste-portal-deployment"
+                            sh "kubectl rollout status deployment/ewaste-portal-deployment"
+                        } else {
+                            echo "No active deployment found to roll back."
+                        }
                     } else {
-                        bat "kubectl rollout undo deployment/ewaste-portal-deployment"
-                        bat "kubectl rollout status deployment/ewaste-portal-deployment"
+                        // Checks if deployment exists on Windows to avoid crashing the failure stage
+                        def checkDeploy = bat(script: "kubectl get deployment ewaste-portal-deployment", returnStatus: true)
+                        if (checkDeploy == 0) {
+                            bat "kubectl rollout undo deployment/ewaste-portal-deployment"
+                            bat "kubectl rollout status deployment/ewaste-portal-deployment"
+                        } else {
+                            echo "No active deployment found to roll back."
+                        }
                     }
                 }
             }
